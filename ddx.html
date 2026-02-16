@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DD-X Timer</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; background: #121212; color: #e0e0e0; }
+        .timer { font-size: 6rem; margin: 10px; font-family: 'Courier New', monospace; color: #bdc3c7; transition: color 0.1s; }
+        .status { font-size: 1.2rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 2px; }
+        .agitation-guide { font-style: italic; color: #3498db; margin-bottom: 20px; height: 1.5rem; font-weight: bold; }
+        
+        .temp-control { background: #1e1e1e; padding: 20px; border-radius: 15px; display: inline-block; margin-bottom: 20px; width: 380px; border: 1px solid #333; }
+        input[type=range] { width: 100%; margin: 15px 0; cursor: pointer; accent-color: #bdc3c7; }
+        .temp-display { font-size: 1.8rem; font-weight: bold; color: #bdc3c7; }
+
+        .button-row { display: flex; justify-content: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        button { padding: 12px 15px; font-size: 0.85rem; cursor: pointer; border-radius: 50px; border: none; font-weight: bold; transition: 0.2s; min-width: 120px; }
+        
+        .dev-btn { background: #bdc3c7; color: #121212; }
+        .stop-btn { background: #95a5a6; color: white; }
+        .fix-btn { background: #2980b9; color: white; } /* Slightly deeper blue for Rapid Fix */
+        .reset-btn { background: #444; color: white; min-width: 100px; margin-top: 10px; }
+        
+        .flash-active { color: #ffffff !important; text-shadow: 0 0 30px #3498db !important; }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="step-name">DD-X / D-76 (B&W)</div>
+    
+    <div class="temp-control">
+        <div class="temp-display" id="tempText">68&deg;F (20&deg;C)</div>
+        <input type="range" id="tempSlider" min="50" max="104" value="68" oninput="updateFromTemp()">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #777;">
+            <span>10&deg;C</span>
+            <span>40&deg;C</span>
+        </div>
+    </div>
+
+    <div class="agitation-guide" id="agitationGuide">Standard Agitation (30s Interval)</div>
+
+    <div class="timer" id="display">09:00</div>
+    
+    <div class="button-row">
+        <button class="dev-btn" onclick="startDev()">START DEV</button>
+        <button class="stop-btn" onclick="startStop()">STOP BATH</button>
+        <button class="fix-btn" onclick="startFix()">RAPID FIX</button>
+    </div>
+    
+    <button class="reset-btn" onclick="resetTimer()">RESET</button>
+
+    <script>
+        let countdown;
+        let isRunning = false;
+        let devSeconds = 540;
+        let currentInterval = 30;
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const display = document.getElementById('display');
+
+        function updateFromTemp() {
+            if (isRunning) return;
+            const f = parseInt(document.getElementById('tempSlider').value);
+            const c = Math.round((f - 32) * 5 / 9);
+            document.getElementById('tempText').innerHTML = f + "&deg;F (" + c + "&deg;C)";
+            
+            // DD-X/D-76 Coefficient Logic
+            devSeconds = Math.round(540 * Math.pow(0.9, (f - 68) / 1.8));
+            
+            if (f < 65) {
+                currentInterval = 60;
+                document.getElementById('agitationGuide').innerText = "COLD: MINIMAL AGITATION";
+            } else {
+                currentInterval = 30;
+                document.getElementById('agitationGuide').innerText = "STANDARD AGITATION (30s)";
+            }
+            display.innerHTML = formatTime(devSeconds);
+        }
+
+        function formatTime(s) {
+            const mins = Math.floor(s / 60);
+            const secs = Math.floor(s % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function playBeep(freq, duration, startTime = 0) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + startTime);
+            const start = audioCtx.currentTime + startTime;
+            const end = start + duration;
+
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.8, start + 0.01); 
+            gain.gain.setValueAtTime(0.8, start + (duration * 0.8)); 
+            gain.gain.linearRampToValueAtTime(0.001, end); 
+            
+            osc.start(start);
+            osc.stop(end);
+            
+            setTimeout(() => {
+                display.classList.add('flash-active');
+                setTimeout(() => display.classList.remove('flash-active'), duration * 1000);
+            }, startTime * 1000);
+        }
+
+        function triggerIntervalBeeps() {
+            playBeep(880, 0.2, 0);
+            playBeep(880, 0.2, 0.35);
+            playBeep(880, 0.2, 0.7);
+        }
+
+        function startDev() { startTimer(devSeconds, 'Developer', currentInterval); }
+        function startStop() { startTimer(60, 'Stop Bath', 0); }
+        function startFix() { startTimer(180, 'Rapid Fixer', 30); } // Set to 3:00
+
+        function startTimer(seconds, label, interval) {
+            if (isRunning) return;
+            audioCtx.resume().then(() => {
+                isRunning = true;
+                document.getElementById('tempSlider').disabled = true;
+                let timeLeft = seconds;
+                document.getElementById('step-name').innerText = `Step: ${label}`;
+                
+                triggerIntervalBeeps();
+
+                countdown = setInterval(() => {
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(countdown);
+                        playBeep(440, 2.0, 0); 
+                        document.getElementById('step-name').innerText = "DONE!";
+                        isRunning = false;
+                        return;
+                    }
+                    display.innerHTML = formatTime(timeLeft);
+                    if (interval > 0 && timeLeft > 0 && timeLeft % interval === 0) {
+                        triggerIntervalBeeps();
+                    }
+                }, 1000);
+            });
+        }
+
+        function resetTimer() {
+            clearInterval(countdown);
+            isRunning = false;
+            document.getElementById('tempSlider').disabled = false;
+            updateFromTemp();
+            document.getElementById('step-name').innerText = "DD-X / D-76";
+        }
+    </script>
+</body>
+</html>
