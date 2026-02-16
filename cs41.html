@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>CS41 Timer</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; background: #121212; color: #e0e0e0; }
+        .timer { font-size: 6rem; margin: 10px; font-family: 'Courier New', monospace; color: #e67e22; transition: color 0.1s; }
+        .status { font-size: 1.2rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 2px; }
+        .agitation-guide { font-style: italic; color: #8e44ad; margin-bottom: 20px; height: 1.5rem; font-weight: bold; }
+        
+        .temp-control { background: #1e1e1e; padding: 20px; border-radius: 15px; display: inline-block; margin-bottom: 20px; width: 380px; border: 1px solid #333; }
+        input[type=range] { width: 100%; margin: 15px 0; cursor: pointer; accent-color: #2ecc71; }
+        .roll-display { font-size: 1.8rem; font-weight: bold; color: #2ecc71; }
+
+        .button-row { display: flex; justify-content: center; gap: 10px; margin-bottom: 10px; }
+        button { padding: 15px 20px; font-size: 0.9rem; cursor: pointer; border-radius: 50px; border: none; font-weight: bold; transition: 0.2s; min-width: 160px; }
+        
+        .dev-btn { background: #d35400; color: white; }
+        .blix-btn { background: #8e44ad; color: white; }
+        .stop-btn { background: #444; color: white; min-width: 120px; margin-top: 10px; }
+        
+        .flash-active { color: #f1c40f !important; text-shadow: 0 0 30px #f1c40f !important; }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="step-name">Target: 102°F (39°C)</div>
+    
+    <div class="temp-control">
+        <div class="roll-display">Rolls Processed: <span id="rollValue">0</span></div>
+        <input type="range" id="rollSlider" min="0" max="24" value="0" oninput="updateExhaustion()">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #777;">
+            <span>Fresh (3:30)</span>
+            <span>24 Rolls (5:38)</span>
+        </div>
+    </div>
+
+    <div class="agitation-guide" id="agitationGuide">Standard Agitation (30s Interval)</div>
+
+    <div class="timer" id="display">03:30</div>
+    
+    <div class="button-row">
+        <button class="dev-btn" id="devBtn" onclick="startDev()">START DEV</button>
+        <button class="blix-btn" id="blixBtn" onclick="startBlix()">START BLIX</button>
+    </div>
+    
+    <button class="stop-btn" onclick="resetTimer()">RESET</button>
+
+    <script>
+        let countdown;
+        let isRunning = false;
+        let adjustedDevSeconds = 210;
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const display = document.getElementById('display');
+
+        function updateExhaustion() {
+            if (isRunning) return;
+            const rolls = document.getElementById('rollSlider').value;
+            document.getElementById('rollValue').innerText = rolls;
+            
+            // CineStill Formula: base 210s * 1.02^rolls
+            adjustedDevSeconds = Math.round(210 * Math.pow(1.02, rolls));
+            display.innerHTML = formatTime(adjustedDevSeconds);
+        }
+
+        function formatTime(s) {
+            const mins = Math.floor(s / 60);
+            const secs = Math.floor(s % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function playBeep(freq, duration, startTime = 0) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + startTime);
+            
+            const start = audioCtx.currentTime + startTime;
+            const end = start + duration;
+
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.8, start + 0.01); 
+            gain.gain.setValueAtTime(0.8, start + (duration * 0.8)); 
+            gain.gain.linearRampToValueAtTime(0.001, end); 
+            
+            osc.start(start);
+            osc.stop(end);
+            
+            setTimeout(() => {
+                display.classList.add('flash-active');
+                setTimeout(() => display.classList.remove('flash-active'), duration * 1000);
+            }, startTime * 1000);
+        }
+
+        function triggerIntervalBeeps() {
+            playBeep(880, 0.2, 0);
+            playBeep(880, 0.2, 0.35);
+            playBeep(880, 0.2, 0.7);
+        }
+
+        function startDev() {
+            startTimer(adjustedDevSeconds, 'Developer');
+        }
+
+        function startBlix() {
+            startTimer(480, 'Blix'); 
+        }
+
+        function startTimer(seconds, label) {
+            if (isRunning) return;
+            audioCtx.resume().then(() => {
+                isRunning = true;
+                document.getElementById('rollSlider').disabled = true;
+                let timeLeft = seconds;
+                
+                document.getElementById('step-name').innerText = `Step: ${label}`;
+                
+                // Start Chirp
+                triggerIntervalBeeps();
+
+                countdown = setInterval(() => {
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(countdown);
+                        playBeep(880, 2.0, 0); 
+                        document.getElementById('step-name').innerText = "DONE - POUR BACK!";
+                        isRunning = false;
+                        return;
+                    }
+                    display.innerHTML = formatTime(timeLeft);
+                    
+                    if (timeLeft > 0 && timeLeft % 30 === 0) {
+                        triggerIntervalBeeps();
+                    }
+                }, 1000);
+            });
+        }
+
+        function resetTimer() {
+            clearInterval(countdown);
+            isRunning = false;
+            document.getElementById('rollSlider').disabled = false;
+            updateExhaustion();
+            document.getElementById('step-name').innerText = "Target: 102°F (39°C)";
+        }
+    </script>
+
+</body></html>

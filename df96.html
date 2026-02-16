@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>DF96 Timer</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; background: #121212; color: #e0e0e0; }
+        .timer { font-size: 6rem; margin: 10px; font-family: 'Courier New', monospace; color: #3498db; transition: color 0.1s; }
+        .status { font-size: 1.2rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 2px; }
+        .agitation-guide { font-style: italic; color: #f1c40f; margin-bottom: 20px; height: 1.5rem; font-weight: bold; }
+        
+        .temp-control { background: #1e1e1e; padding: 20px; border-radius: 15px; display: inline-block; margin-bottom: 20px; width: 380px; border: 1px solid #333; }
+        input[type=range] { width: 100%; margin: 15px 0; cursor: pointer; accent-color: #2ecc71; }
+        .temp-display { font-size: 1.8rem; font-weight: bold; color: #2ecc71; }
+
+        button { padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 50px; border: none; font-weight: bold; transition: 0.2s; }
+        .start-btn { background: #27ae60; color: white; margin-right: 10px; }
+        .stop-btn { background: #c0392b; color: white; }
+        .flash-active { color: #f1c40f !important; text-shadow: 0 0 30px #f1c40f !important; }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="step-name">Set Temperature</div>
+    
+    <div class="temp-control">
+        <div class="temp-display" id="tempText">60°F (16°C)</div>
+        <input type="range" id="tempSlider" min="50" max="104" value="60" oninput="updateFromTemp()">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #777;">
+            <span>10°C (50°F)</span>
+            <span>40°C (104°F)</span>
+        </div>
+    </div>
+
+    <div class="agitation-guide" id="agitationGuide">INTERMITTENT (30s INTERVAL)</div>
+
+    <div class="timer" id="display">04:00</div>
+    
+    <div>
+        <button class="start-btn" id="startBtn" onclick="startTimer()">START</button>
+        <button class="stop-btn" onclick="resetTimer()">RESET</button>
+    </div>
+
+    <script>
+        let countdown;
+        let totalSeconds = 240;
+        let agitationInterval = 30;
+        let isRunning = false;
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const display = document.getElementById('display');
+
+        updateFromTemp() // reset the temp
+
+        function updateFromTemp() {
+            if (isRunning) return;
+            const f = parseInt(document.getElementById('tempSlider').value);
+            const c = Math.round((f - 32) * 5 / 9);
+            document.getElementById('tempText').innerText = `${f}°F (${c}°C)`;
+            
+            // Dynamic Time and Agitation Logic
+            if (f >= 80) {
+                totalSeconds = Math.max(120, 180 - ((f - 80) * 3));
+                agitationInterval = 15;
+                document.getElementById('agitationGuide').innerText = "CONSTANT AGITATION (15s PULSE)";
+            } else if (f >= 70) {
+                totalSeconds = 360 - ((f - 70) * 24);
+                agitationInterval = 30;
+                document.getElementById('agitationGuide').innerText = "INTERMITTENT (30s INTERVAL)";
+            } else {
+                totalSeconds = 360 + ((70 - f) * 36);
+                agitationInterval = 60; // 1-minute interval for minimal/cold processing
+                document.getElementById('agitationGuide').innerText = "MINIMAL (1 min INTERVAL)";
+            }
+            display.innerHTML = formatTime(totalSeconds);
+        }
+
+        function formatTime(s) {
+            const mins = Math.floor(s / 60);
+            const secs = Math.floor(s % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function playBeep(freq, duration, startTime = 0) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + startTime);
+            
+            const start = audioCtx.currentTime + startTime;
+            const end = start + duration;
+
+            // ENHANCED AUDIO PROFILE
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.8, start + 0.01); // Quick attack to 80% volume
+            gain.gain.setValueAtTime(0.8, start + (duration * 0.8)); // Hold volume for 80% of the beep
+            gain.gain.linearRampToValueAtTime(0.001, end); // Quick release
+            
+            osc.start(start);
+            osc.stop(end);
+            
+            setTimeout(() => {
+                display.classList.add('flash-active');
+                setTimeout(() => display.classList.remove('flash-active'), duration * 1000);
+            }, startTime * 1000);
+        }
+
+        function triggerIntervalBeeps() {
+            // Punchy Triple Beep at 880Hz
+            playBeep(880, 0.2, 0);
+            playBeep(880, 0.2, 0.35);
+            playBeep(880, 0.2, 0.7);
+        }
+
+        function startTimer() {
+            if (isRunning) return;
+            audioCtx.resume().then(() => {
+                isRunning = true;
+                document.getElementById('tempSlider').disabled = true;
+                let timeLeft = totalSeconds;
+                
+                // Initial Start Beeps
+                triggerIntervalBeeps();
+
+                countdown = setInterval(() => {
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(countdown);
+                        playBeep(440, 2.0, 0); // Solid 440Hz finish tone
+                        document.getElementById('step-name').innerText = "DONE - POUR!";
+                        isRunning = false;
+                        return;
+                    }
+                    display.innerHTML = formatTime(timeLeft);
+                    
+                    if (timeLeft > 0 && timeLeft % agitationInterval === 0) {
+                        triggerIntervalBeeps();
+                    }
+                }, 1000);
+            });
+        }
+
+        function resetTimer() {
+            clearInterval(countdown);
+            isRunning = false;
+            document.getElementById('tempSlider').disabled = false;
+            updateFromTemp();
+            document.getElementById('step-name').innerText = "Set Temperature";
+        }
+    </script>
+</body>
+</html>
